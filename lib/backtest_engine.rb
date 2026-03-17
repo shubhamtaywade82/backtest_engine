@@ -6,6 +6,7 @@ require_relative "backtest_engine/execution_engine"
 require_relative "backtest_engine/instrument_engine"
 require_relative "backtest_engine/runner"
 require_relative "backtest_engine/metrics"
+require_relative "backtest_engine/dhan_configuration"
 
 module BacktestEngine
 end
