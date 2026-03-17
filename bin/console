@@ -1,0 +1,20 @@
+#!/usr/bin/env ruby
+
+require "bundler/setup"
+
+begin
+  require "dotenv"
+  Dotenv.load
+rescue LoadError
+  warn "dotenv not available; skipping .env loading"
+end
+
+require "irb"
+require_relative "../lib/backtest_engine"
+
+puts "Loaded BacktestEngine (v#{BacktestEngine::VERSION})"
+puts "ENV loaded from .env (if present)."
+puts "You can now work with BacktestEngine in IRB."
+
+IRB.start(__FILE__)
+
