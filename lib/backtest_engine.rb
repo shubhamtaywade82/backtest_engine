@@ -7,6 +7,17 @@ require_relative "backtest_engine/instrument_engine"
 require_relative "backtest_engine/runner"
 require_relative "backtest_engine/metrics"
 require_relative "backtest_engine/dhan_configuration"
+require_relative "backtest_engine/market/candle"
+require_relative "backtest_engine/market/candle_series"
+require_relative "backtest_engine/market/context_builder"
+require_relative "backtest_engine/data/candle_normalizer"
+require_relative "backtest_engine/data/index_loader"
+require_relative "backtest_engine/data/options_loader"
+require_relative "backtest_engine/data/timeframe_resampler"
+require_relative "backtest_engine/data/instrument_metadata"
+require_relative "backtest_engine/data/dataset_builder"
+require_relative "backtest_engine/strategies/expiry_trend_v1"
+require_relative "backtest_engine/strategies/runner"
 
 module BacktestEngine
 end

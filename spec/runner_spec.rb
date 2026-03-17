@@ -3,8 +3,22 @@ require "spec_helper"
 RSpec.describe BacktestEngine::Runner do
   it "runs a simple backtest and returns metrics" do
     index_candles = [
-      { timestamp: 1, open: 100, high: 101, low: 99, close: 100, volume: 10 },
-      { timestamp: 2, open: 101, high: 103, low: 100, close: 102, volume: 12 }
+      BacktestEngine::Market::Candle.new(
+        timestamp: Time.at(1),
+        open: 100,
+        high: 101,
+        low: 99,
+        close: 100,
+        volume: 10
+      ),
+      BacktestEngine::Market::Candle.new(
+        timestamp: Time.at(2),
+        open: 101,
+        high: 103,
+        low: 100,
+        close: 102,
+        volume: 12
+      )
     ]
 
     option_data = {

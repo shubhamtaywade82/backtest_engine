@@ -13,11 +13,11 @@ module BacktestEngine
     def run
       index_engine.each_candle do |index_candle, index|
         structure = index_engine.structure_state(index)
-        strike_info = option_mapper.select_strike(index_candle[:close], structure)
+        strike_info = option_mapper.select_strike(index_candle.close, structure)
         next unless strike_info
 
         option_candle = option_mapper.price_at(
-          index_candle[:timestamp],
+          index_candle.timestamp,
           strike_info[:strike],
           strike_info[:type]
         )
@@ -39,7 +39,7 @@ module BacktestEngine
       {
         structure: structure,
         option_price: option_candle[:close],
-        timestamp: index_candle[:timestamp]
+        timestamp: index_candle.timestamp
       }
     end
 

@@ -26,11 +26,11 @@ module BacktestEngine
     private
 
     def bullish?(previous, current)
-      current[:high] > previous[:high] && current[:low] > previous[:low]
+      current.high > previous.high && current.low > previous.low
     end
 
     def bearish_or_range(previous, current)
-      return :bearish if current[:low] < previous[:low] && current[:high] < previous[:high]
+      return :bearish if current.low < previous.low && current.high < previous.high
 
       :range
     end
