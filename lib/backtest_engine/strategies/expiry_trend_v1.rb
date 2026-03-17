@@ -36,7 +36,12 @@ module BacktestEngine
       end
 
       def tradable_structure?
-        %i[bullish bearish].include?(context[:structure])
+        return false unless %i[bullish bearish].include?(context[:structure])
+
+        iv = context[:iv]
+        return true if iv.nil?
+
+        iv < 60 # simple guard: skip ultra-high IV regimes
       end
 
       def bullish_setup?

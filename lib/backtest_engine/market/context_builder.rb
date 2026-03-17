@@ -8,6 +8,8 @@ module BacktestEngine
           structure: indicators[:structure],
           pullback: indicators[:pullback],
           volume_spike: indicators[:volume_spike],
+          iv: indicators[:iv],
+          iv_percentile: indicators[:iv_percentile],
           ltp: ltp
         }
       end
