@@ -16,10 +16,12 @@ module BacktestEngine
       keyword_init: true
     )
 
-    attr_reader :trades
+    attr_reader :trades, :decision_counts, :skip_reasons
 
     def initialize
       @trades = []
+      @decision_counts = Hash.new(0)
+      @skip_reasons = Hash.new(0)
     end
 
     def record_trade(trade)
@@ -31,6 +33,15 @@ module BacktestEngine
       end
 
       trades << trade
+    end
+
+    def record_decision(action:, day_type: nil, session: nil, regime: nil, reason: nil)
+      key = [action&.to_sym, day_type, session, regime].freeze
+      decision_counts[key] += 1
+
+      return unless action&.to_sym == :skip && reason
+
+      skip_reasons[reason.to_s] += 1
     end
 
     def total_pnl

@@ -42,6 +42,8 @@ module BacktestEngine
         context = strategy_result[:context]
         signal = strategy_result[:signal]
 
+        record_decision(signal, context, day_type: day_type)
+
         position = manage_position(
           position: position,
           signal: signal,
@@ -58,6 +60,22 @@ module BacktestEngine
     private
 
     attr_reader :index_candles, :option_data, :execution_engine, :risk_per_trade_pct, :lot_size
+
+    def record_decision(signal, context, day_type:)
+      return unless signal.is_a?(Hash)
+
+      timestamp = context[:time]
+      session = session_for(timestamp, day_type: day_type) if timestamp.respond_to?(:strftime)
+      regime = regime_for(context)
+
+      metrics.record_decision(
+        action: signal[:action],
+        day_type: day_type,
+        session: session,
+        regime: regime,
+        reason: signal[:reason]
+      )
+    end
 
     def build_indicators(indicator_series:, iv_series:, htf_bias_mapper:, candle_index:, timestamp:)
       {
