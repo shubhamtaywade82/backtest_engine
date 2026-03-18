@@ -9,10 +9,9 @@ module BacktestEngine
       def self.fetch(interval:, from:, to:, expiry: "WEEK", expiry_code:, security_id: DEFAULT_SECURITY_ID, strikes: DEFAULT_STRIKES)
         require "dhan_hq"
 
-        raise ArgumentError, "expiry_code is required for expired options backfill" if expiry_code.nil?
+        validate_expiry_code!(expiry_code)
 
-        from_date = normalize_date(from)
-        to_date = normalize_date(to)
+        from_date, to_date = normalize_date_range(from, to)
 
         strikes.each_with_object({}) do |strike, result|
           %w[CALL PUT].each do |type|
@@ -37,11 +36,25 @@ module BacktestEngine
         end
       end
 
-      def self.normalize_date(value)
-        Date.parse(value.to_s).strftime("%Y-%m-%d")
+      def self.normalize_date_range(from, to)
+        from_date = Date.parse(from.to_s)
+        to_date = Date.parse(to.to_s)
+
+        # DhanHQ ExpiredOptionsData validates `from_date` must be strictly before `to_date`.
+        to_date = from_date + 1 if from_date >= to_date
+
+        [from_date.strftime("%Y-%m-%d"), to_date.strftime("%Y-%m-%d")]
       end
 
-      private_class_method :normalize_date
+      def self.validate_expiry_code!(expiry_code)
+        value = Integer(expiry_code, exception: false)
+        return if value && value.positive?
+
+        raise ArgumentError, "expiry_code must be a positive Integer for ExpiredOptionsData.fetch (example: 1). Got: #{expiry_code.inspect}"
+      end
+
+      private_class_method :normalize_date_range
+      private_class_method :validate_expiry_code!
     end
   end
 end

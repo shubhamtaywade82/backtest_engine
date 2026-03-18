@@ -12,8 +12,7 @@ module BacktestEngine
       def initialize(
         timestamp:,
         open:,
-        high:
-        ,
+        high:,
         low:,
         close:,
         volume: 0,

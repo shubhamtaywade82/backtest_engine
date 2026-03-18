@@ -60,51 +60,52 @@ metrics = runner.run
 puts metrics.total_pnl
 ```
 
-### Runnable example – build dataset via DhanHQ (NIFTY)
+### Supported indices
 
-This example uses the **data layer** to fetch index + options and align them.
+You can run a backtest for any of: **NIFTY**, **BANKNIFTY**, **SENSEX**. Pass `symbol:` to `DatasetBuilder`; it resolves DhanHQ security ID and you get the correct lot size from `InstrumentMetadata.lot_size(symbol)`.
+
+### Runnable example – build dataset via DhanHQ (any index + period)
+
+This example uses the **data layer** to fetch index + options for a given **symbol** and **date range**.
 
 ```ruby
 require "backtest_engine"
 require "dhan_hq"
 
-# Configure DhanHQ (ENV, token endpoint, or both)
 BacktestEngine::DhanConfiguration.configure_with_env_or_token_endpoint
 
-dataset = BacktestEngine::Data::DatasetBuilder.new(
-  interval: 1,                               # 1‑minute
-  from: "2025-01-01 09:15:00",               # intraday window for index
-  to:   "2025-01-01 15:30:00",
-  expiry_code: 0                             # DhanHQ expiry code:
-                                             #   0 = current/near expiry
-                                             #   1 = next expiry
-                                             #   2 = far expiry
-).build
+symbol = "NIFTY"   # or "BANKNIFTY", "SENSEX"
+from  = "2025-01-01 09:15:00"
+to    = "2025-01-01 15:30:00"
 
-row = dataset.first
-row[:timestamp]  # Time
-row[:index]      # BacktestEngine::Market::Candle (index)
-row[:options]    # { ["ATM", :call] => option_candle_hash, ... }
+dataset = BacktestEngine::Data::DatasetBuilder.new(
+  interval: 1,
+  from: from,
+  to: to,
+  expiry_code: 0,    # 0 = current expiry, 1 = next, 2 = far
+  symbol: symbol
+).build
 
 index_candles = dataset.map { |r| r[:index] }
 
 option_data = {
-  call: {
-    # very simple: pick the first available strike as ATM for demo
-    dataset.first[:options].keys.first.last => dataset.map { |r| r[:options].values.first }.compact
-  },
-  put: {}
+  call: {},
+  put:  {}
 }
+
+lot_size = BacktestEngine::Data::InstrumentMetadata.lot_size(symbol)
 
 runner = BacktestEngine::Runner.new(
   index_candles: index_candles,
   option_data: option_data,
-  lot_size: 50
+  lot_size: lot_size
 )
 
 metrics = runner.run
-puts "NIFTY total PnL: #{metrics.total_pnl.round(2)}"
+puts "#{symbol} total PnL: #{metrics.total_pnl.round(2)}"
 ```
+
+To use a **raw DhanHQ security ID** instead of a symbol, pass `security_id:` and omit `symbol:`.
 
 ### Using the ExpiryTrendV1 strategy on a series
 

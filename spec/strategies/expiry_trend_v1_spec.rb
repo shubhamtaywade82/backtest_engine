@@ -6,6 +6,7 @@ RSpec.describe BacktestEngine::Strategies::ExpiryTrendV1 do
     {
       time: Time.parse("12:00"),
       structure: :bullish,
+      htf_bias: :bullish,
       pullback: true,
       volume_spike: true
     }

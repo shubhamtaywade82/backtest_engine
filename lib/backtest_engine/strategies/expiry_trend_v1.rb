@@ -45,22 +45,36 @@ module BacktestEngine
       end
 
       def bullish_setup?
-        context[:structure] == :bullish &&
+        context[:htf_bias] == :bullish &&
+          context[:structure] == :bullish &&
           context[:pullback] &&
           context[:volume_spike]
       end
 
       def bearish_setup?
-        context[:structure] == :bearish &&
+        context[:htf_bias] == :bearish &&
+          context[:structure] == :bearish &&
           context[:pullback] &&
           context[:volume_spike]
+      end
+
+      def strike_mode
+        iv = context[:iv]
+
+        if context[:structure] == :bullish && iv && iv < 25
+          :atm_plus_1
+        elsif context[:structure] == :bearish && iv && iv < 25
+          :atm_minus_1
+        else
+          :atm
+        end
       end
 
       def build_trade(option_type)
         {
           action: :buy,
           option_type: option_type,
-          strike: :atm,
+          strike: strike_mode,
           sl_pct: SL_PCT,
           target_pct: TARGET_PCT,
           trail: true,

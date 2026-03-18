@@ -1,0 +1,302 @@
+module BacktestEngine
+  class BacktestSession
+    Result = Struct.new(:portfolio, :metrics, keyword_init: true)
+
+    def initialize(index_candles:, option_data:, starting_capital:, lot_size:, risk_per_trade_pct: 1.0)
+      @index_candles = index_candles
+      @option_data = option_data
+      @portfolio = Portfolio::Portfolio.new(starting_capital: starting_capital)
+      @execution_engine = ExecutionEngine.new(lot_size: lot_size)
+      @risk_per_trade_pct = risk_per_trade_pct.to_f
+      @lot_size = lot_size
+      @metrics = Metrics.new
+    end
+
+    attr_reader :portfolio, :metrics
+
+    def run(strategy_class, day_type: :normal, ltp_source: :options_close)
+      indicator_series = Market::CandleSeries.new(index_candles)
+      iv_series = build_iv_series
+      htf_bias_mapper = build_htf_bias_mapper
+
+      position = nil
+
+      index_candles.each_with_index do |index_candle, index|
+        indicators = build_indicators(
+          indicator_series: indicator_series,
+          iv_series: iv_series,
+          htf_bias_mapper: htf_bias_mapper,
+          candle_index: index,
+          timestamp: index_candle.timestamp
+        )
+
+        ltp = resolve_ltp(ltp_source, index_candle, position)
+
+        strategy_result = Strategies::Runner.new(
+          index_candle: index_candle,
+          indicators: indicators,
+          ltp: ltp,
+          strategy_class: strategy_class
+        ).call
+
+        context = strategy_result[:context]
+        signal = strategy_result[:signal]
+
+        position = manage_position(
+          position: position,
+          signal: signal,
+          context: context,
+          timestamp: index_candle.timestamp,
+          day_type: day_type,
+          candle_index: index
+        )
+      end
+
+      Result.new(portfolio: portfolio, metrics: metrics)
+    end
+
+    private
+
+    attr_reader :index_candles, :option_data, :execution_engine, :risk_per_trade_pct, :lot_size
+
+    def build_indicators(indicator_series:, iv_series:, htf_bias_mapper:, candle_index:, timestamp:)
+      {
+        structure: structure_at(indicator_series, candle_index),
+        pullback: indicator_series.pullback?(candle_index),
+        volume_spike: indicator_series.volume_spike?(candle_index),
+        iv: iv_series&.iv_for(timestamp),
+        iv_percentile: iv_series&.iv_percentile(timestamp),
+        htf_bias: htf_bias_mapper&.bias_for(timestamp)
+      }
+    end
+
+    def structure_at(series, index)
+      return :range if index < 2
+
+      series.structure[index - 2] || :range
+    end
+
+    def build_iv_series
+      atm_call = option_data[["ATM", :call]]
+      return nil if atm_call.nil? || atm_call.empty?
+
+      Market::IvSeries.new(atm_call)
+    end
+
+    def build_htf_bias_mapper
+      htf_candles = resample_index_to_htf(index_candles, interval_minutes: 5)
+      return nil if htf_candles.empty?
+
+      structure_helper = Market::HtfStructureHelper.new(htf_candles)
+      Market::HtfBiasMapper.new(htf_candles, structure_helper.structure)
+    end
+
+    def resample_index_to_htf(candles, interval_minutes:)
+      return [] if candles.empty?
+      return [] if interval_minutes.to_i <= 1
+
+      candles.each_slice(interval_minutes.to_i).map do |group|
+        {
+          timestamp: group.first.timestamp,
+          open: group.first.open,
+          high: group.map(&:high).max,
+          low: group.map(&:low).min,
+          close: group.last.close,
+          volume: group.sum(&:volume)
+        }
+      end
+    end
+
+    def resolve_ltp(source, index_candle, position)
+      case source
+      when :index_close
+        index_candle.close
+      when :options_close
+        return nil unless position
+
+        candle = option_candle_at(position[:strike], position[:option_type], index_candle.timestamp)
+        candle && candle[:close].to_f
+      else
+        nil
+      end
+    end
+
+    def manage_position(position:, signal:, context:, timestamp:, day_type:, candle_index:)
+      session = session_for(timestamp, day_type: day_type)
+      regime = regime_for(context)
+
+      updated_position = position && update_exit_rules(position, context, timestamp, candle_index)
+      return nil if updated_position == :closed
+
+      position = updated_position
+
+      return position if position
+      return position unless signal.is_a?(Hash) && signal[:action] == :buy
+
+      open_position_from_signal(signal, context, timestamp, day_type, session, regime, candle_index)
+    end
+
+    def open_position_from_signal(signal, context, timestamp, day_type, session, regime, candle_index)
+      strike_key = strike_key_for(signal[:strike])
+      option_type = signal[:option_type]
+
+      option_candle = option_candle_at(strike_key, option_type, timestamp)
+      return nil unless option_candle
+
+      raw_entry = option_candle[:close].to_f
+      entry_price = execution_engine.entry_fill(raw_entry)
+      required_capital = execution_engine.capital_required(entry_price)
+
+      opened = portfolio.open_position!(signal, entry_price, lot_size, quantity_for_trade(required_capital))
+      return nil unless opened
+
+      opened.merge!(
+        option_type: option_type,
+        strike: strike_key,
+        entry_time: timestamp,
+        entry_index: candle_index,
+        max_hold_minutes: signal[:max_hold_minutes],
+        sl_pct: signal[:sl_pct],
+        target_pct: signal[:target_pct],
+        trail_trigger: signal[:trail_trigger],
+        trailing_sl: nil,
+        day_type: day_type,
+        session: session,
+        regime: regime,
+        direction: context[:structure]
+      )
+
+      opened
+    end
+
+    def quantity_for_trade(required_capital)
+      return 1 if required_capital <= 0.0
+
+      risk_budget = (portfolio.cash * (risk_per_trade_pct / 100.0))
+      return 1 if risk_budget <= 0.0
+
+      [1, (risk_budget / required_capital).floor].max
+    end
+
+    def update_exit_rules(position, context, timestamp, candle_index)
+      option_candle = option_candle_at(position[:strike], position[:option_type], timestamp)
+      return position unless option_candle
+
+      raw_ltp = option_candle[:close].to_f
+      ltp = execution_engine.exit_fill(raw_ltp)
+
+      pnl_pct = ((ltp - position[:entry_price]) / position[:entry_price]) * 100.0
+
+      update_trailing_sl(position, ltp, pnl_pct)
+
+      if should_exit_position?(position, pnl_pct, context, timestamp, candle_index, ltp)
+        close_position!(position, ltp, timestamp, pnl_pct)
+        return :closed
+      end
+
+      position
+    end
+
+    def update_trailing_sl(position, ltp, pnl_pct)
+      return position unless position[:trail_trigger]
+      return position unless pnl_pct >= position[:trail_trigger].to_f
+
+      new_trailing = ltp * 0.85
+      existing = position[:trailing_sl]
+
+      position[:trailing_sl] = existing ? [existing, new_trailing].max : new_trailing
+      position
+    end
+
+    def should_exit_position?(position, pnl_pct, context, timestamp, candle_index, ltp)
+      return true if pnl_pct <= -position[:sl_pct].to_f
+      return true if pnl_pct >= position[:target_pct].to_f
+      return true if position[:trailing_sl] && ltp <= position[:trailing_sl]
+
+      max_hold = position[:max_hold_minutes].to_i
+      return true if max_hold.positive? && held_minutes(position, timestamp) > max_hold
+
+      return true if context[:structure] && context[:structure] != position[:direction]
+
+      false
+    end
+
+    def held_minutes(position, now)
+      ((now - position[:entry_time]) / 60.0).to_i
+    end
+
+    def close_position!(position, exit_price, timestamp, pnl_pct)
+      pnl = portfolio.close_position!(position, exit_price, execution_engine)
+      portfolio.record_equity(pnl: pnl)
+
+      metrics.record_trade(
+        Metrics::Trade.new(
+          entry_time: position[:entry_time],
+          exit_time: timestamp,
+          side: :buy,
+          option_type: position[:option_type],
+          strike: position[:strike],
+          entry_price: position[:entry_price],
+          exit_price: exit_price,
+          pnl: pnl,
+          pnl_pct: pnl_pct,
+          day_type: position[:day_type],
+          session: position[:session],
+          regime: position[:regime]
+        )
+      )
+    end
+
+    def strike_key_for(mode)
+      case mode
+      when :atm
+        "ATM"
+      when :atm_plus_1
+        "ATM+1"
+      when :atm_minus_1
+        "ATM-1"
+      when :atm_plus_2
+        "ATM+2"
+      when :atm_minus_2
+        "ATM-2"
+      else
+        "ATM"
+      end
+    end
+
+    def option_candle_at(strike_key, option_type, timestamp)
+      candles = option_data[[strike_key, option_type]]
+      return nil unless candles
+
+      candles.find { |c| c[:timestamp] == timestamp || c[:timestamp] == timestamp.to_i }
+    end
+
+    def regime_for(context)
+      structure = context[:structure]
+      return :chop if structure == :range || structure == :neutral || structure.nil?
+
+      structure == :bullish ? :trend_bull : :trend_bear
+    end
+
+    def session_for(time, day_type:)
+      hhmm = time.strftime("%H:%M")
+
+      if day_type == :expiry
+        return :e1 if hhmm >= "09:15" && hhmm < "09:30"
+        return :e2 if hhmm >= "09:30" && hhmm < "11:00"
+        return :e3 if hhmm >= "11:00" && hhmm < "13:30"
+        return :e4 if hhmm >= "13:30" && hhmm <= "15:15"
+
+        return :off
+      end
+
+      return :s1 if hhmm >= "09:15" && hhmm < "09:45"
+      return :s2 if hhmm >= "09:45" && hhmm < "11:30"
+      return :s3 if hhmm >= "11:30" && hhmm < "13:45"
+      return :s4 if hhmm >= "13:45" && hhmm <= "15:15"
+
+      :off
+    end
+  end
+end
+
