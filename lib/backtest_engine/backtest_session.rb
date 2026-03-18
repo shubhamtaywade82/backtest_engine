@@ -1,6 +1,11 @@
 module BacktestEngine
   class BacktestSession
     Result = Struct.new(:portfolio, :metrics, keyword_init: true)
+    DEFAULT_INDICATOR_PARAMS = {
+      pullback_ema_period: 20,
+      volume_spike_factor: 1.2,
+      volume_spike_period: 10
+    }.freeze
 
     def initialize(index_candles:, option_data:, starting_capital:, lot_size:, risk_per_trade_pct: 1.0)
       @index_candles = index_candles
@@ -14,10 +19,15 @@ module BacktestEngine
 
     attr_reader :portfolio, :metrics
 
-    def run(strategy_class, day_type: :normal, ltp_source: :options_close)
+    def run(strategy_class, day_type: :normal, ltp_source: :options_close, structure_engine: :default, regime_scorer: false, strategy_router: false, indicator_params: {})
       indicator_series = Market::CandleSeries.new(index_candles)
       iv_series = build_iv_series
       htf_bias_mapper = build_htf_bias_mapper
+      structure_engine_v2 = (structure_engine == :v2) ? Market::StructureEngineV2.new(indicator_series) : nil
+      regime_scorer_instance = regime_scorer ? Market::RegimeScorer.new(indicator_series) : nil
+      regime_state_instance = regime_scorer ? Market::RegimeState.new : nil
+      router = strategy_router ? Strategies::Router.new : nil
+      indicator_params = DEFAULT_INDICATOR_PARAMS.merge(indicator_params.transform_keys(&:to_sym))
 
       position = nil
 
@@ -26,6 +36,10 @@ module BacktestEngine
           indicator_series: indicator_series,
           iv_series: iv_series,
           htf_bias_mapper: htf_bias_mapper,
+          structure_engine_v2: structure_engine_v2,
+          regime_scorer: regime_scorer_instance,
+          regime_state: regime_state_instance,
+          indicator_params: indicator_params,
           candle_index: index,
           timestamp: index_candle.timestamp
         )
@@ -41,6 +55,17 @@ module BacktestEngine
 
         context = strategy_result[:context]
         signal = strategy_result[:signal]
+
+        if router && signal.is_a?(Hash) && signal[:action] == :buy
+          session = index_candle.timestamp.respond_to?(:strftime) ? session_for(index_candle.timestamp, day_type: day_type) : nil
+          regime = regime_for(context)
+          unless router.tradable?(session: session, day_type: day_type, regime: regime)
+            signal = {
+              action: :skip,
+              reason: "Session/regime not allowed (session=#{session.inspect}, regime=#{regime.inspect}, day_type=#{day_type})"
+            }
+          end
+        end
 
         record_decision(signal, context, day_type: day_type)
 
@@ -77,18 +102,37 @@ module BacktestEngine
       )
     end
 
-    def build_indicators(indicator_series:, iv_series:, htf_bias_mapper:, candle_index:, timestamp:)
-      {
-        structure: structure_at(indicator_series, candle_index),
-        pullback: indicator_series.pullback?(candle_index),
-        volume_spike: indicator_series.volume_spike?(candle_index),
+    def build_indicators(indicator_series:, iv_series:, htf_bias_mapper:, structure_engine_v2: nil, regime_scorer: nil, regime_state: nil, indicator_params:, candle_index:, timestamp:)
+      base = {
+        structure: resolve_structure(indicator_series, candle_index, structure_engine_v2),
+        pullback: indicator_series.pullback?(candle_index, ema_period: indicator_params[:pullback_ema_period]),
+        volume_spike: indicator_series.volume_spike?(
+          candle_index,
+          factor: indicator_params[:volume_spike_factor],
+          period: indicator_params[:volume_spike_period]
+        ),
         iv: iv_series&.iv_for(timestamp),
         iv_percentile: iv_series&.iv_percentile(timestamp),
         htf_bias: htf_bias_mapper&.bias_for(timestamp)
       }
+
+      if regime_scorer && regime_state
+        score = regime_scorer.score_at(candle_index)
+        state = regime_state.update(candle_index, score[:direction])
+        base[:regime_score] = score[:score]
+        base[:regime_stable] = state[:allowed_to_trade]
+      end
+
+      base
     end
 
-    def structure_at(series, index)
+    def resolve_structure(series, index, engine_v2)
+      return engine_v2.structure_at(index) if engine_v2
+
+      structure_at_legacy(series, index)
+    end
+
+    def structure_at_legacy(series, index)
       return :range if index < 2
 
       series.structure[index - 2] || :range

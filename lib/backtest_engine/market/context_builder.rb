@@ -10,6 +10,9 @@ module BacktestEngine
           volume_spike: indicators[:volume_spike],
           iv: indicators[:iv],
           iv_percentile: indicators[:iv_percentile],
+          htf_bias: indicators[:htf_bias],
+          regime_score: indicators[:regime_score],
+          regime_stable: indicators[:regime_stable],
           ltp: ltp
         }
       end

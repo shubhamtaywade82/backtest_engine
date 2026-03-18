@@ -191,6 +191,8 @@ module BacktestEngine
         return false if index < period
 
         window = candles[(index - period)...index]
+        return true if volume_unavailable?(window)
+
         average = window.sum(&:volume) / period.to_f
 
         candles[index].volume > average * factor
@@ -211,6 +213,10 @@ module BacktestEngine
       end
 
       private
+
+      def volume_unavailable?(window)
+        window.all? { |candle| candle.volume.to_i.zero? }
+      end
 
       def fetch_from_cache(key, parameter = nil)
         cache_key = [key, parameter]

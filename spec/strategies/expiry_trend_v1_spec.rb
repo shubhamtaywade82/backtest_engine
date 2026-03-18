@@ -28,5 +28,14 @@ RSpec.describe BacktestEngine::Strategies::ExpiryTrendV1 do
     expect(result[:action]).to eq(:skip)
     expect(result[:reason]).to match(/Outside time window/)
   end
+
+  it "does not require htf_bias when it is nil" do
+    context[:htf_bias] = nil
+
+    result = described_class.new(context: context).call
+
+    expect(result[:action]).to eq(:buy)
+    expect(result[:option_type]).to eq(:call)
+  end
 end
 

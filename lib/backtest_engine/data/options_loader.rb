@@ -1,4 +1,5 @@
 require "date"
+require "time"
 
 module BacktestEngine
   module Data
@@ -29,7 +30,7 @@ module BacktestEngine
               required_data: %w[open high low close volume oi iv strike spot]
             )
 
-            candles = data.to_candles(type)
+            candles = normalize_candles(data.to_candles(type))
             key = [strike, type.downcase.to_sym]
             result[key] = candles
           end
@@ -53,8 +54,32 @@ module BacktestEngine
         raise ArgumentError, "expiry_code must be a positive Integer for ExpiredOptionsData.fetch (example: 1). Got: #{expiry_code.inspect}"
       end
 
+      def self.normalize_candles(candles)
+        Array(candles).map do |candle|
+          next candle unless candle.is_a?(Hash)
+
+          ts = candle[:timestamp] || candle["timestamp"]
+          normalized_ts = normalize_timestamp(ts)
+
+          candle.merge(timestamp: normalized_ts)
+        end
+      end
+
+      def self.normalize_timestamp(value)
+        return nil if value.nil?
+        return value if value.is_a?(Time)
+        return Time.at(value) if value.is_a?(Integer)
+
+        string = value.to_s.strip
+        return Time.at(string.to_i) if string.match?(/\A\d+\z/)
+
+        Time.parse(string)
+      end
+
       private_class_method :normalize_date_range
       private_class_method :validate_expiry_code!
+      private_class_method :normalize_candles
+      private_class_method :normalize_timestamp
     end
   end
 end

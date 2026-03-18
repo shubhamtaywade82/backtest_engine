@@ -45,17 +45,24 @@ module BacktestEngine
       end
 
       def bullish_setup?
-        context[:htf_bias] == :bullish &&
+        htf_bias_allows?(:bullish) &&
           context[:structure] == :bullish &&
           context[:pullback] &&
           context[:volume_spike]
       end
 
       def bearish_setup?
-        context[:htf_bias] == :bearish &&
+        htf_bias_allows?(:bearish) &&
           context[:structure] == :bearish &&
           context[:pullback] &&
           context[:volume_spike]
+      end
+
+      def htf_bias_allows?(direction)
+        htf = context[:htf_bias]
+        return true if htf.nil?
+
+        htf == direction
       end
 
       def strike_mode

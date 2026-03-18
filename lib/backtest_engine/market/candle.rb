@@ -161,8 +161,12 @@ module BacktestEngine
 
       def normalize_time(value)
         return value if value.is_a?(Time)
+        return Time.at(value) if value.is_a?(Integer)
 
-        Time.parse(value.to_s)
+        string = value.to_s.strip
+        return Time.at(string.to_i) if string.match?(/\A\d+\z/)
+
+        Time.parse(string)
       end
 
       def to_f!(value, field)

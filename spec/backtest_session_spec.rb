@@ -1,3 +1,60 @@
+# frozen_string_literal: true
+
+require "spec_helper"
+require "time"
+
+RSpec.describe BacktestEngine::BacktestSession do
+  def candle(ts, close: 100.0)
+    BacktestEngine::Market::Candle.new(
+      timestamp: ts,
+      open: close,
+      high: close,
+      low: close,
+      close: close,
+      volume: 1000
+    )
+  end
+
+  describe "#run" do
+    context "when strategy_router is enabled" do
+      it "does not overwrite skip reasons from the strategy" do
+        strategy_class = Class.new do
+          def initialize(context:)
+            @context = context
+          end
+
+          def call
+            { action: :skip, reason: "Outside time window" }
+          end
+        end
+
+        index_candles = [
+          candle(Time.parse("2025-01-02 09:15:00")),
+          candle(Time.parse("2025-01-02 12:00:00"))
+        ]
+
+        session = described_class.new(
+          index_candles: index_candles,
+          option_data: {},
+          starting_capital: 100_000,
+          lot_size: 50
+        )
+
+        result = session.run(
+          strategy_class,
+          day_type: :expiry,
+          strategy_router: true,
+          structure_engine: :v2,
+          regime_scorer: true
+        )
+
+        expect(result.metrics.trades.size).to eq(0)
+        expect(result.metrics.skip_reasons["Outside time window"]).to eq(2)
+      end
+    end
+  end
+end
+
 require "spec_helper"
 require "time"
 
